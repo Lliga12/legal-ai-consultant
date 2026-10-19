@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from config import (ROOT, ConfigError, load_judge_settings, load_settings,
                     load_supabase_settings, load_web_settings)
 from core.assistant import Assistant
+from core.diagnostics import report_input_error
 from core.judge import Judge
 from core.memory import HistoryConsentRequired, Memory
 from core.prompts import DISCLAIMER
@@ -133,8 +134,11 @@ def create_app(runtime: Runtime | None = None):
             raise gr.Error(str(exc)) from None
         except DatabaseError:
             raise gr.Error("Не удалось подтвердить операцию в БД. Восстановите диалог; повтор заявки использует тот же черновик.") from None
-        except (ValueError, TypeError, AttributeError):
-            raise gr.Error("Проверьте ввод и доступ к сессии. Если диалог устарел, восстановите его.") from None
+        except (ValueError, TypeError, AttributeError) as exc:
+            code = report_input_error(exc)
+            raise gr.Error("Не удалось завершить операцию. "
+                           f"Код диагностики: {code}. "
+                           "Восстановите диалог перед повтором.") from None
 
     def start(consent, saved):
         def operation():
