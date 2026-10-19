@@ -1,0 +1,34 @@
+# Первый запуск — только тестовый веб-сервис, без создания платного worker.
+services:
+  - type: web
+    name: legal-ai-consultant
+    runtime: python
+    plan: free
+    numInstances: 1
+    buildCommand: python -m pip install -r requirements.txt
+    startCommand: python app.py
+    healthCheckPath: /
+    autoDeployTrigger: "off"
+    envVars:
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: GRADIO_ANALYTICS_ENABLED
+        value: "False"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONIOENCODING
+        value: utf-8
+      - key: WEB_AUTH_USERNAME
+        sync: false
+      - key: WEB_AUTH_PASSWORD
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: JUDGE_MODE
+        value: local
+      - key: LLM_REQUESTS_PER_MINUTE
+        value: "5"
+      - key: LLM_MAX_REQUESTS_PER_PROCESS
+        value: "20"
+      - key: TELEGRAM_INCLUDE_CONTACT
+        value: "false"
