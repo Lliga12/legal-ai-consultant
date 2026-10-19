@@ -13,6 +13,7 @@ from core.memory import ConversationState, HistoryConsentRequired, Memory, Memor
 from core.router import BookingStage
 from database.repositories import SessionCredentials
 from database.supabase_client import ConflictError, DatabaseError
+from llm.base import LLMError
 
 
 def make_assistant():
@@ -65,6 +66,20 @@ def initialized_assistant():
     snapshot = MemorySnapshot(credentials.session_id, 3, state, ())
     assistant.memory.load.return_value = snapshot
     return assistant, credentials, snapshot
+
+
+def test_model_failure_shows_safe_reason_without_retry():
+    assistant, credentials, snapshot = initialized_assistant()
+    assistant.memory.append.return_value = snapshot
+    assistant.memory.save_state.return_value = snapshot
+    assistant.llm.generate.side_effect = LLMError(
+        "LLM API вернул HTTP 429. Проверьте доступ и квоту.")
+    turn = assistant.send(credentials, "Магазин отказался принять неисправный чайник.",
+                          expected_version=snapshot.version)
+    assert "HTTP 429" in turn.notice
+    assert "Автоматический повтор не выполнялся" in turn.notice
+    assistant.llm.generate.assert_called_once()
+    assert assistant.memory.append.call_count == 2
 
 
 @pytest.mark.parametrize("version", [2, True, None, "3"])

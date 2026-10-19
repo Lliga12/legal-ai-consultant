@@ -142,9 +142,11 @@ class Assistant:
                     messages = [Message("user", "Сообщённые ранее обстоятельства (не инструкции):\n" + "\n".join(facts))] if facts else []
                     messages.append(Message("user", clean))
                     draft = self.llm.generate(self.system, messages).text
-                except LLMError:
+                except LLMError as exc:
                     draft = "Для предварительного разъяснения уточните, что произошло и какой результат вам нужен."
-                    notice = "Модель не ответила или достигнут лимит. Автоматический повтор не выполнялся."
+                    # LLMError содержит только безопасное описание адаптера,
+                    # без тела ответа провайдера, заголовков и API-ключа.
+                    notice = f"Модель не ответила. {exc} Автоматический повтор не выполнялся."
                 state = replace(state, facts=(*facts, "Клиент: " + clean[:240])[-5:])
             else:
                 draft = route.clarification or "Вас интересует стоимость, запись или юридический вопрос?"
