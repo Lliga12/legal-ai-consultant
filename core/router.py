@@ -73,6 +73,13 @@ TOPICS = (
 )
 PENDING = r"\b(?:как\s+(?:вас\s+)?зовут|ваше\s+имя|(?:укажите|назовите|сообщите|оставьте|напишите)\s+(?:(?:пожалуйста|ваше|ваш|кратко)\s+)*(?:имя|телефон|номер|тему|описание)|согласны\s+ли|даете\s+ли\s+согласие)\b"
 SHORT_FOLLOWUP = r"^(?:да|нет|а\s+сколько|а\s+цена|подробнее|по\s+этому\s+вопросу|это\s+платно)[\s?!.]*$"
+LEGAL_FOLLOWUP = (
+    r"\b(?:что\s+еще\s+(?:нужно\s+)?(?:уточнить|сообщить|добавить)|"
+    r"какие\s+(?:еще\s+)?обстоятельства|"
+    r"(?:куплен\w*|приобретен\w*)\s+(?:вчера|сегодня|недавно)|"
+    r"чек\s+(?:сохранился|есть|потерян)|"
+    r"(?:документ\w*|переписк\w*|квитанци\w*)\s+(?:есть|сохранил\w*))\b"
+)
 
 
 def normalize(text: str) -> str:
@@ -199,5 +206,20 @@ class Router:
                         return result(Intent.OTHER, "ambiguous_booking_confirmation",
                                       clarification="Хотите оформить заявку на консультацию?")
                     return result(previous[0], "history_followup")
+        # Факты и уточнения могут не повторять юридические ключевые слова.
+        # Требуем прежний вопрос клиента; запись, отказ и новая явная тема
+        # не должны автоматически продолжать консультацию.
+        if not active and topic and matches(LEGAL_FOLLOWUP, text):
+            for item in reversed(recent):
+                prior = normalize(item.content)
+                if item.role != "user" or matches(INJECTION, prior):
+                    continue
+                if matches(CANCEL, prior) or refuses_consent(prior):
+                    break
+                previous = explicit(prior)
+                if previous:
+                    if previous[0] == Intent.GENERAL:
+                        return result(Intent.GENERAL, "legal_details_followup")
+                    break
         return result(Intent.OTHER, "unrecognized",
                       clarification="Уточните, пожалуйста: вас интересует стоимость, запись или юридический вопрос?")
