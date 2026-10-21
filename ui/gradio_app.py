@@ -171,19 +171,29 @@ def create_app(runtime: Runtime | None = None, voice_service=None):
         if assistant is None:
             raise gr.Error(runtime.issue or "Сервер ещё не настроен.")
 
-    def safe(action):
+    def safe(action, *, count, status_index, reset=()):
+        def failed(message):
+            # Expected errors must not replace every output with Gradio's red
+            # error overlay. Preserve visible data; never grant consent on retry.
+            gr.Warning(message)
+            values = [gr.skip() for _ in range(count)]
+            values[status_index] = message
+            for index in reset:
+                values[index] = False
+            return tuple(values)
+
         try:
             ready()
             return action()
         except (HistoryConsentRequired, ConflictError) as exc:
-            raise gr.Error(str(exc)) from None
+            return failed(str(exc))
         except DatabaseError:
-            raise gr.Error("Не удалось подтвердить операцию в БД. Восстановите диалог; повтор заявки использует тот же черновик.") from None
+            return failed("Не удалось подтвердить операцию в БД. Восстановите диалог; повтор заявки использует тот же черновик.")
         except (ValueError, TypeError, AttributeError) as exc:
             code = report_input_error(exc)
-            raise gr.Error("Не удалось завершить операцию. "
+            return failed("Не удалось завершить операцию. "
                            f"Код диагностики: {code}. "
-                           "Восстановите диалог перед повтором.") from None
+                           "Восстановите диалог перед повтором.")
 
     def start(consent, saved):
         def operation():
@@ -192,24 +202,26 @@ def create_app(runtime: Runtime | None = None, voice_service=None):
             credentials = credentials_from_browser(saved) or assistant.memory.repositories.new_credentials()
             snapshot = assistant.start(credentials, consent=True)
             return credentials, snapshot.version, browser_value(credentials), chat_value(snapshot), "Диалог готов.", booking_value(snapshot)
-        return safe(operation)
+        return safe(operation, count=6, status_index=4)
 
     def restore(saved):
         if saved is None or assistant is None:
-            return None, None, [{"role": "assistant", "content": WELCOME}], runtime.issue or "Подтвердите условия и начните диалог.", "", False
+            return None, None, [{"role": "assistant", "content": WELCOME}], runtime.issue or "Подтвердите условия и начните диалог.", "", False, False
         def operation():
             credentials = credentials_from_browser(saved)
             snapshot = assistant.memory.load(credentials)
-            return credentials, snapshot.version, chat_value(snapshot), "Диалог восстановлен из БД.", booking_value(snapshot), snapshot.state.history_allowed
-        return safe(operation)
+            return credentials, snapshot.version, chat_value(snapshot), "Диалог восстановлен из БД. Проверьте заявку и отметьте отдельное согласие перед подтверждением.", booking_value(snapshot), snapshot.state.history_allowed, False
+        return safe(operation, count=7, status_index=3, reset=(6,))
 
     def send(text, credentials, version):
         def operation():
+            if not isinstance(text, str) or not text.strip():
+                raise HistoryConsentRequired("Введите вопрос в поле «Ваш вопрос», затем нажмите «Отправить».")
             if credentials is None:
                 raise HistoryConsentRequired("Сначала подтвердите условия и начните диалог.")
             turn = assistant.send(credentials, text, expected_version=version)
             return chat_value(turn.snapshot), turn.notice or "Ответ подготовлен. Информация предварительная.", booking_value(turn.snapshot), turn.snapshot.version, "", False
-        return safe(operation)
+        return safe(operation, count=6, status_index=1, reset=(5,))
 
     def confirm(consent, credentials, version):
         def operation():
@@ -217,7 +229,7 @@ def create_app(runtime: Runtime | None = None, voice_service=None):
                 raise HistoryConsentRequired("Сначала начните диалог.")
             turn = assistant.confirm(credentials, expected_version=version, consent=consent)
             return chat_value(turn.snapshot), turn.notice or "Операция обработана.", booking_value(turn.snapshot), turn.snapshot.version, False
-        return safe(operation)
+        return safe(operation, count=5, status_index=1, reset=(4,))
 
     def clear(confirmed, credentials, version, leads=False):
         def operation():
@@ -228,7 +240,7 @@ def create_app(runtime: Runtime | None = None, voice_service=None):
             snapshot = assistant.clear(credentials, expected_version=version, leads=leads)
             return chat_value(snapshot), ("Заявки и задачи уведомлений удалены. Переписка сохранена." if leads else
                 "История и черновик очищены. Перед новым сообщением снова подтвердите условия."), booking_value(snapshot), snapshot.version, snapshot.state.history_allowed, False, False
-        return safe(operation)
+        return safe(operation, count=7, status_index=1, reset=(5, 6))
 
     with gr.Blocks(title="AI-консультант юриста", analytics_enabled=False) as demo:
         gr.Markdown("# AI-консультант юриста\nСмоленск · консультации для физических лиц по всей России")
@@ -296,7 +308,7 @@ def create_app(runtime: Runtime | None = None, voice_service=None):
         # всё равно проверяет владение сессией и версию в БД.
         event = dict(api_visibility="private", concurrency_id="dialog", concurrency_limit=1, show_progress="full")
         begin.click(start, [history_consent, saved], [credentials, version, saved, chat, status, preview], **event)
-        restore_outputs = [credentials, version, chat, status, preview, history_consent]
+        restore_outputs = [credentials, version, chat, status, preview, history_consent, lead_consent]
         reload_button.click(restore, [saved], restore_outputs, **event)
         new_button.click(lambda: (None, None, None, [{"role": "assistant", "content": WELCOME}],
             "Доступ к прежнему диалогу убран из этого браузера. Подтвердите условия для нового.", "", False, False),
