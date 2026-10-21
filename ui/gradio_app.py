@@ -118,7 +118,7 @@ def booking_value(snapshot):
         "Имя: " + (state.client_name or "—"), "Телефон: " + (state.booking_phone or "—")))
 
 
-def create_app(runtime: Runtime | None = None):
+def create_app(runtime: Runtime | None = None, voice_service=None):
     runtime = runtime or load_runtime()
     assistant = runtime.assistant
 
@@ -211,6 +211,29 @@ def create_app(runtime: Runtime | None = None):
                           feedback_options=(), allow_file_downloads=False, elem_id="legal-chat")
         text = gr.Textbox(label="Ваш вопрос", placeholder="Например: как взыскать алименты?", max_length=1500, lines=2, interactive=assistant is not None)
         send_button = gr.Button("Отправить", variant="primary", interactive=assistant is not None)
+        if voice_service is not None:
+            with gr.Accordion("Поговорить с помощником", open=True):
+                gr.Markdown("Голос передаётся Яндексу для распознавания и ответа. Только вымышленные данные. "
+                    "Аудио и полная расшифровка не сохраняются нашим сайтом; Яндекс обрабатывает их по своим условиям. "
+                    "Черновик заявки сохраняется в вашей Supabase после просьбы оформить его. "
+                    "Голосовые ответы экспериментальные и не проходят проверку текстового чата. "
+                    "До 3 минут, один разговор одновременно. Сначала начните текстовый диалог кнопкой выше.")
+                voice_consent = gr.Checkbox(False, label="Согласен на передачу моего тестового голоса Яндексу и подготовку черновика заявки")
+                voice_begin = gr.Button("Открыть голосовой разговор", interactive=assistant is not None)
+                voice_frame = gr.HTML()
+                gr.Markdown("После подготовки голосовой заявки завершите разговор и нажмите «Восстановить диалог» выше. "
+                    "Затем проверьте заявку и подтвердите её отдельной кнопкой ниже. Время согласует юрист.")
+
+                def open_voice(consent, c, v):
+                    try:
+                        token = voice_service.issue(consent, c, v)
+                    except ValueError as exc:
+                        raise gr.Error(str(exc)) from None
+                    return ('<iframe title="Голосовой помощник" src="/voice/#' + token +
+                            '" allow="microphone; autoplay" style="width:100%;height:430px;border:0;border-radius:12px"></iframe>')
+
+                voice_begin.click(open_voice, [voice_consent, credentials, version], [voice_frame],
+                    api_visibility="private", concurrency_id="dialog", concurrency_limit=1)
         with gr.Accordion("Заявка", open=True):
             preview = gr.Textbox(label="Данные заявки — проверьте перед подтверждением", interactive=False, lines=6)
             gr.Markdown(LEAD_NOTICE)
@@ -243,12 +266,27 @@ def create_app(runtime: Runtime | None = None):
     return demo
 
 
-def launch():
-    settings = load_web_settings()
-    create_app().launch(server_name="0.0.0.0", server_port=settings.port, share=False,
+def create_server(runtime=None, settings=None):
+    from fastapi import FastAPI
+    from ui.voice import VoiceService, install_routes
+    settings = settings or load_web_settings()
+    runtime = runtime or load_runtime()
+    voice = VoiceService(runtime.assistant)
+    demo = create_app(runtime, voice_service=voice)
+    demo.state_session_capacity = 1000
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    # Install before the root mount. Reuse Gradio's login cookies for HTTP and WS.
+    install_routes(app, voice, lambda: app.routes[-1].app, settings.username is not None)
+    return gr.mount_gradio_app(app, demo, path="/",
         auth=settings.authenticate if settings.username is not None else None,
         auth_message="Тестовый доступ к AI-консультанту. Используйте только вымышленные данные.",
-        show_error=False, inbrowser=False, strict_cors=True, footer_links=[],
-        state_session_capacity=1000,
+        show_error=False, footer_links=[], run_history=False,
         css=UI_CSS,
         blocked_paths=[str(ROOT / ".env"), str(ROOT / ".git"), str(ROOT / "database")])
+
+
+def launch():
+    import uvicorn
+    settings = load_web_settings()
+    uvicorn.run(create_server(settings=settings), host="0.0.0.0", port=settings.port,
+                ws_max_size=65536, ws="websockets", log_level="warning")

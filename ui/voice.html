@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Голосовой помощник</title>
+<style>
+body{font:16px system-ui;margin:0;padding:20px;background:#fafafa;color:#242424;text-align:center}
+button{font:inherit;border:0;border-radius:10px;padding:12px 22px;margin:6px;cursor:pointer;background:#f97316;color:white}
+button:disabled{opacity:.45;cursor:default}#stop{background:#555}.orb{margin:6px auto;width:76px;height:76px;border-radius:50%;background:radial-gradient(circle at 30% 25%,#ffcb7e,#f97316 65%)}
+.live{animation:pulse 1.4s infinite alternate}@keyframes pulse{to{transform:scale(1.08);box-shadow:0 0 26px #f9a34d}}
+#transcript{text-align:left;max-height:140px;overflow:auto;white-space:pre-wrap;border:1px solid #ddd;border-radius:8px;padding:10px;margin-top:12px;background:white}#status{min-height:24px}small{display:block;color:#555}#draft{color:#216c37}
+</style>
+<div class="orb" id="orb"></div>
+<div id="status" role="status" aria-live="polite">Готов к разговору</div>
+<button id="start">Включить микрофон и говорить</button><button id="stop" disabled>Завершить</button>
+<small>Только вымышленные данные. До 3 минут. Лучше использовать наушники.</small>
+<div id="draft" role="status"></div><div id="transcript" aria-label="Текст голосового разговора"></div>
+<script>
+(() => {
+  'use strict';
+  const el=id=>document.getElementById(id);
+  const ticket=location.hash.slice(1); history.replaceState(null,'',location.pathname);
+  let ws,stream,context,processor,source,mute,deadline,starting=false,stopped=false,ready=false;
+  let next=0,outputRate=44100,turn=null,hasText=false,playAllowed=false;
+  const players=new Set();
+  function clearAudio(){for(const p of players){try{p.stop();}catch{}}players.clear();next=0;}
+  function stop(message){
+    stopped=true;ready=false;clearTimeout(deadline);
+    if(ws){ws.onclose=null;ws.close();ws=null;}
+    if(processor){processor.onaudioprocess=null;processor.disconnect();processor=null;}
+    if(source){source.disconnect();source=null;}if(mute){mute.disconnect();mute=null;}
+    if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+    clearAudio();if(context){context.close().catch(()=>{});context=null;}
+    el('orb').classList.remove('live');el('stop').disabled=true;el('start').disabled=true;
+    el('status').textContent=message||'Разговор завершён. Для нового нажмите «Открыть голосовой разговор» на сайте.';
+  }
+  function row(label,text){const p=document.createElement('div');p.textContent=label+text;el('transcript').append(p);while(el('transcript').children.length>30)el('transcript').firstChild.remove();p.scrollIntoView({block:'nearest'});return p;}
+  function play(encoded){
+    if(!context||stopped)return;
+    const raw=atob(encoded);if(raw.length%2)return;
+    const buffer=context.createBuffer(1,raw.length/2,outputRate), data=buffer.getChannelData(0);
+    for(let i=0;i<data.length;i++){let n=raw.charCodeAt(i*2)|(raw.charCodeAt(i*2+1)<<8);if(n>=32768)n-=65536;data[i]=n/32768;}
+    const player=context.createBufferSource();player.buffer=buffer;player.connect(context.destination);
+    next=Math.max(context.currentTime+.02,next);player.start(next);next+=buffer.duration;
+    players.add(player);player.onended=()=>players.delete(player);
+  }
+  el('start').onclick=async()=>{
+    if(starting)return;starting=true;el('start').disabled=true;el('stop').disabled=false;
+    el('status').textContent='Разрешите микрофон. Подключаемся…';
+    try{
+      if(!ticket||!navigator.mediaDevices?.getUserMedia)throw Error();
+      context=new AudioContext({sampleRate:44100});await context.resume();
+      if(stopped)return;
+      const acquired=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+      if(stopped){acquired.getTracks().forEach(t=>t.stop());return;}stream=acquired;
+      source=context.createMediaStreamSource(stream);
+      // ScriptProcessor is retained for browsers without AudioWorklet support in embedded frames.
+      // Resample to the server's explicit 44.1 kHz input, regardless of device clock.
+      processor=context.createScriptProcessor(4096,1,1);mute=context.createGain();mute.gain.value=0;
+      source.connect(processor);processor.connect(mute);mute.connect(context.destination);
+      processor.onaudioprocess=event=>{
+        if(!ready||!ws||ws.readyState!==WebSocket.OPEN)return;
+        if(ws.bufferedAmount>262144){stop('Связь слишком медленная. Разговор завершён.');return;}
+        const input=event.inputBuffer.getChannelData(0),ratio=context.sampleRate/44100;
+        const out=new ArrayBuffer(Math.floor(input.length/ratio)*2),view=new DataView(out);
+        for(let i=0;i<out.byteLength/2;i++){const at=i*ratio,j=Math.floor(at),f=at-j;const sample=input[j]*(1-f)+(input[Math.min(j+1,input.length-1)]||0)*f;view.setInt16(i*2,Math.round(Math.max(-1,Math.min(1,sample))*32767),true);}
+        ws.send(out);
+      };
+      ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/voice/ws');
+      deadline=setTimeout(()=>stop('Истекло время подключения. Откройте голосовой разговор заново.'),35000);
+      ws.onopen=()=>ws.send(JSON.stringify({ticket}));
+      ws.onerror=()=>stop('Не удалось подключить голос. Проверьте сеть и откройте разговор заново.');
+      ws.onclose=()=>stop();
+      ws.onmessage=event=>{
+        let e;try{e=JSON.parse(event.data);}catch{return;}
+        switch(e.type){
+          case 'ready':ready=true;clearTimeout(deadline);deadline=setTimeout(()=>stop('Достигнут лимит 3 минуты. Разговор завершён.'),181000);el('status').textContent='На связи. Говорите…';el('orb').classList.add('live');break;
+          case 'notice':stop(e.text);break;
+          case 'draft_ready':el('draft').textContent='Черновик готов. Завершите разговор → «Восстановить диалог» → проверьте «Заявку» и подтвердите её отдельной кнопкой.';break;
+          case 'input_audio_buffer.speech_started':playAllowed=false;clearAudio();break;
+          case 'response.created':playAllowed=true;turn=null;hasText=false;break;
+          case 'conversation.item.input_audio_transcription.completed':row('Вы: ',e.transcript||'');break;
+          case 'response.output_text.delta':hasText=true;if(!turn)turn=row('Помощник: ','');turn.textContent+=e.delta||'';break;
+          case 'response.output_audio_transcript.delta':if(!hasText){if(!turn)turn=row('Помощник: ','');turn.textContent+=e.delta||'';}break;
+          case 'response.output_audio.delta':if(playAllowed)play(e.delta);break;
+        }
+      };
+    }catch{stop('Не удалось включить голос. Проверьте разрешение микрофона и откройте разговор заново.');}
+  };
+  el('stop').onclick=()=>stop();
+  addEventListener('pagehide',()=>stop());
+  document.addEventListener('visibilitychange',()=>{if(document.hidden&&starting)stop('Разговор завершён при уходе со вкладки.');});
+})();
+</script></html>
