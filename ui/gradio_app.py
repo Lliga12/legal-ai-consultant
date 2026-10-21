@@ -25,7 +25,52 @@ from llm.factory import create_llm
 WELCOME = "Здравствуйте! Я помогу уточнить юридический вопрос, стоимость и оформить заявку на консультацию."
 # Встроенный clear Gradio меняет только виджет, не БД. Оставляем явную кнопку
 # удаления истории с подтверждением; прочие встроенные toolbar-кнопки выключены.
-UI_CSS = "#legal-chat button.icon-button { display: none !important; }"
+UI_CSS = """
+#legal-chat button.icon-button { display: none !important; }
+#voice-welcome {
+    background: linear-gradient(115deg, #fff7ed, #fffdf9) !important;
+    border: 2px solid #fb923c !important; border-radius: 20px !important;
+    padding: 24px !important; gap: 16px !important;
+    box-shadow: 0 8px 28px rgba(194, 91, 12, .10); margin: 16px 0 !important;
+}
+.voice-heading { display: flex; align-items: center; gap: 22px; color: #292018; }
+.voice-symbol {
+    display: grid; place-items: center; flex: 0 0 88px; height: 88px;
+    border-radius: 50%; color: #fff; background: linear-gradient(140deg,#ffad4d,#ed650a);
+    box-shadow: 0 6px 18px rgba(234, 88, 12, .20);
+}
+.voice-heading h2 { margin: 0 0 8px !important; font-size: clamp(24px,3vw,32px) !important;
+    line-height: 1.2 !important; font-weight: 750 !important; color: #292018 !important; }
+.voice-heading p { margin: 0 !important; font-size: 17px !important; color: #675347 !important; }
+#voice-start {
+    background: #e85b04 !important; color: #fff !important; border: 0 !important;
+    min-height: 62px !important; font-size: 20px !important; font-weight: 700 !important;
+    border-radius: 12px !important; box-shadow: 0 4px 12px rgba(194, 65, 12, .18);
+}
+#voice-start:hover:not(:disabled) { background: #c84d03 !important; }
+#voice-start:focus-visible { outline: 3px solid #9a3412 !important; outline-offset: 4px; }
+#voice-start:disabled { opacity: .55; }
+@media (max-width: 600px) {
+    #voice-welcome { padding: 18px !important; }
+    .voice-heading { align-items: flex-start; gap: 14px; }
+    .voice-symbol { flex-basis: 60px; height: 60px; }
+    .voice-symbol svg { width: 30px; height: 30px; }
+}
+"""
+VOICE_HEADER = """
+<div class="voice-heading">
+  <div class="voice-symbol" aria-hidden="true">
+    <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+      <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"></path>
+    </svg>
+  </div>
+  <div><h2>Поговорите с помощником юриста</h2>
+    <p>Расскажите о своей ситуации — помощник ответит голосом.</p>
+  </div>
+</div>
+"""
 TEST_NOTICE = (
     "**Тестовая версия. Используйте только вымышленные данные.** Например, имя Тест и телефон +70000000000. "
     "Реальные персональные данные пока не принимаются. После согласия переписка и этап записи сохраняются "
@@ -204,22 +249,17 @@ def create_app(runtime: Runtime | None = None, voice_service=None):
         with gr.Row():
             begin = gr.Button("Начать диалог", variant="primary", interactive=assistant is not None)
             reload_button = gr.Button("Восстановить диалог", interactive=assistant is not None)
-        new_button = gr.Button("Новый диалог — забыть доступ к прежнему")
-        gr.Markdown("Новый диалог убирает доступ из браузера, но не удаляет данные в БД. Сначала удалите ненужные заявки и историю кнопками ниже.")
-        chat = gr.Chatbot(value=[{"role": "assistant", "content": WELCOME}], label="Переписка",
-                          height=400, sanitize_html=True, render_markdown=False, buttons=[],
-                          feedback_options=(), allow_file_downloads=False, elem_id="legal-chat")
-        text = gr.Textbox(label="Ваш вопрос", placeholder="Например: как взыскать алименты?", max_length=1500, lines=2, interactive=assistant is not None)
-        send_button = gr.Button("Отправить", variant="primary", interactive=assistant is not None)
         if voice_service is not None:
-            with gr.Accordion("Поговорить с помощником", open=True):
+            with gr.Column(elem_id="voice-welcome"):
+                gr.HTML(VOICE_HEADER)
                 gr.Markdown("Голос передаётся Яндексу для распознавания и ответа. Только вымышленные данные. "
                     "Аудио и полная расшифровка не сохраняются нашим сайтом; Яндекс обрабатывает их по своим условиям. "
                     "Черновик заявки сохраняется в вашей Supabase после просьбы оформить его. "
                     "Голосовые ответы экспериментальные и не проходят проверку текстового чата. "
                     "До 3 минут, один разговор одновременно. Сначала начните текстовый диалог кнопкой выше.")
                 voice_consent = gr.Checkbox(False, label="Согласен на передачу моего тестового голоса Яндексу и подготовку черновика заявки")
-                voice_begin = gr.Button("Открыть голосовой разговор", interactive=assistant is not None)
+                voice_begin = gr.Button("Начать разговор", variant="primary", size="lg",
+                    elem_id="voice-start", interactive=assistant is not None)
                 voice_frame = gr.HTML()
                 gr.Markdown("После подготовки голосовой заявки завершите разговор и нажмите «Восстановить диалог» выше. "
                     "Затем проверьте заявку и подтвердите её отдельной кнопкой ниже. Время согласует юрист.")
@@ -234,6 +274,13 @@ def create_app(runtime: Runtime | None = None, voice_service=None):
 
                 voice_begin.click(open_voice, [voice_consent, credentials, version], [voice_frame],
                     api_visibility="private", concurrency_id="dialog", concurrency_limit=1)
+        new_button = gr.Button("Новый диалог — забыть доступ к прежнему")
+        gr.Markdown("Новый диалог убирает доступ из браузера, но не удаляет данные в БД. Сначала удалите ненужные заявки и историю кнопками ниже.")
+        chat = gr.Chatbot(value=[{"role": "assistant", "content": WELCOME}], label="Переписка",
+                          height=400, sanitize_html=True, render_markdown=False, buttons=[],
+                          feedback_options=(), allow_file_downloads=False, elem_id="legal-chat")
+        text = gr.Textbox(label="Ваш вопрос", placeholder="Например: как взыскать алименты?", max_length=1500, lines=2, interactive=assistant is not None)
+        send_button = gr.Button("Отправить", variant="primary", interactive=assistant is not None)
         with gr.Accordion("Заявка", open=True):
             preview = gr.Textbox(label="Данные заявки — проверьте перед подтверждением", interactive=False, lines=6)
             gr.Markdown(LEAD_NOTICE)

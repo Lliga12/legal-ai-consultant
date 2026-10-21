@@ -157,7 +157,7 @@ def test_mounted_app_preserves_gradio_login_and_hides_provider_secrets():
         config = client.get('/config')
         assert config.status_code == 200
         assert settings.password not in config.text
-        assert 'Открыть голосовой разговор' in config.text
+        assert 'Начать разговор' in config.text
 
 
 def test_server_duration_limit_closes_upstream_without_browser_cooperation():

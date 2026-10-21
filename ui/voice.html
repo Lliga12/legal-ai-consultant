@@ -30,7 +30,7 @@ button:disabled{opacity:.45;cursor:default}#stop{background:#555}.orb{margin:6px
     if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
     clearAudio();if(context){context.close().catch(()=>{});context=null;}
     el('orb').classList.remove('live');el('stop').disabled=true;el('start').disabled=true;
-    el('status').textContent=message||'Разговор завершён. Для нового нажмите «Открыть голосовой разговор» на сайте.';
+    el('status').textContent=message||'Разговор завершён. Для нового нажмите «Начать разговор» на сайте.';
   }
   function row(label,text){const p=document.createElement('div');p.textContent=label+text;el('transcript').append(p);while(el('transcript').children.length>30)el('transcript').firstChild.remove();p.scrollIntoView({block:'nearest'});return p;}
   function play(encoded){
