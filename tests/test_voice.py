@@ -89,11 +89,15 @@ def test_voice_requires_login_and_same_origin_before_upstream():
     voice, _, _ = service()
     with TestClient(app_for(voice)) as client:
         assert client.get("/voice/").status_code == 401
+        assert client.get("/voice/processor.js").status_code == 401
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect("/voice/ws", headers={"origin": "http://testserver"}):
                 pass
         client.cookies.set("access-token-test", "good-token")
         assert client.get("/voice/").status_code == 200
+        module = client.get("/voice/processor.js")
+        assert module.status_code == 200 and 'text/javascript' in module.headers['content-type']
+        assert "registerProcessor('legal-microphone'" in module.text
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect("/voice/ws", headers={"origin": "https://evil.example"}):
                 pass

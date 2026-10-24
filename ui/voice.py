@@ -13,7 +13,7 @@ import time
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from core.router import BookingStage
 from tools.lead_tools import LeadTools, validated_data
@@ -166,8 +166,15 @@ def install_routes(app, service, gradio_app_getter, auth_required):
             raise HTTPException(401)
         return HTMLResponse(Path(__file__).with_name("voice.html").read_text(encoding="utf-8"), headers={
             "Cache-Control": "no-store", "X-Frame-Options": "SAMEORIGIN",
-            "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self'",
+            "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self'",
         })
+
+    @app.get("/voice/processor.js")
+    async def processor(request: Request):
+        if not allowed(request):
+            raise HTTPException(401)
+        return Response(Path(__file__).with_name("voice_processor.js").read_text(encoding="utf-8"),
+                        media_type="text/javascript", headers={"Cache-Control": "no-store"})
 
     @app.websocket("/voice/ws")
     async def relay(browser: WebSocket):
